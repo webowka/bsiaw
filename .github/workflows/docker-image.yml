@@ -84,23 +84,35 @@ jobs:
       run: |
         mkdir -p zap-reports
         
-        # Run ZAP baseline scan with proper output paths
-        docker run --network host -v $(pwd)/zap-reports:/zap/wrk/:rw \
+        # Verify app is accessible
+        echo "Testing application before ZAP scan..."
+        curl -I http://localhost:8080 || echo "Warning: App might not be responding"
+        
+        # Run ZAP baseline scan - let it write to its default locations
+        echo "Starting ZAP scan..."
+        docker run --network host -v $(pwd):/zap/wrk/:rw \
           ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
           -t http://localhost:8080 \
-          -J /zap/wrk/zap-report.json \
-          -w /zap/wrk/zap-report.md \
-          -r /zap/wrk/zap-report.html \
-          || echo "ZAP scan completed with findings"
+          -J zap-report.json \
+          -w zap-report.md \
+          -r zap-report.html \
+          || echo "ZAP scan completed"
         
-        # Verify files were created
-        echo "ZAP scan results:"
-        ls -lh zap-reports/
+        # Move reports to zap-reports directory
+        echo "Moving ZAP reports..."
+        mv zap-report.* zap-reports/ 2>/dev/null || echo "No ZAP reports to move"
         
-        # Show summary if available
+        # Check what was created
+        echo "Contents of zap-reports directory:"
+        ls -lha zap-reports/
+        
+        # Show report content if available
         if [ -f zap-reports/zap-report.md ]; then
-          echo "ZAP Summary:"
-          head -50 zap-reports/zap-report.md
+          echo "=== ZAP Report Summary ==="
+          head -30 zap-reports/zap-report.md
+        else
+          echo "No reports generated - creating placeholder"
+          echo "ZAP scan was attempted but produced no output" > zap-reports/scan-log.txt
         fi
 
     - name: Stop container
