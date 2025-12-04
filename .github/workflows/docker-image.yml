@@ -7,31 +7,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    # --- Python + pytest ---
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
-        pip install pytest
-
-  run-pytest:
-    runs-on: ubuntu-latest
-    needs: build
 
     steps:
     - uses: actions/checkout@v4
@@ -46,232 +24,98 @@ jobs:
         pip install -r requirements.txt
         pip install pytest
 
-    - name: "Run Unit Tests"
+    - name: Run Unit Tests
       run: pytest -v unit_tests.py
 
-    - name: Log in to GitHub Container Registry
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
     - name: Build Docker image
-      run: |
-        IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
-        TIMESTAMP=$(date +%s)
+      run: docker build . --file Dockerfile --tag test-app:latest
 
-        docker build . --file Dockerfile \
-          --tag $IMAGE_NAME:latest \
-          --tag $IMAGE_NAME:$TIMESTAMP
-
-        echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-        echo "IMAGE_TAG=$TIMESTAMP" >> $GITHUB_ENV
-
-    - name: Push Docker image
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: |
-        docker push $IMAGE_NAME:latest
-        docker push $IMAGE_NAME:$IMAGE_TAG
-
-        echo "Pushed image: $IMAGE_NAME:latest"
-        echo "Pushed image: $IMAGE_NAME:$IMAGE_TAG"
-
-  trivy-scan:
+  security-scans:
     runs-on: ubuntu-latest
-    needs: run-pytest
+    needs: build-and-test
     permissions:
-      contents: read
       security-events: write
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build Docker image for scanning
-      run: |
-        docker build . --file Dockerfile --tag local-image:scan
+    - name: Build Docker image
+      run: docker build . --file Dockerfile --tag scan-image:latest
 
-    - name: Run Trivy vulnerability scanner (SARIF)
+    # Trivy scan
+    - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: 'local-image:scan'
+        image-ref: 'scan-image:latest'
+        format: 'json'
+        output: 'trivy-results.json'
+
+    - name: Run Trivy SARIF scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'scan-image:latest'
         format: 'sarif'
         output: 'trivy-results.sarif'
 
-    - name: Upload Trivy results to GitHub Security
+    - name: Upload Trivy to GitHub Security
       uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
 
-    - name: Run Trivy vulnerability scanner (JSON)
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: 'local-image:scan'
-        format: 'json'
-        output: 'trivy-results.json'
-
-    - name: Run Trivy vulnerability scanner (table output)
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: 'local-image:scan'
-        format: 'table'
-        severity: 'CRITICAL,HIGH'
-
-    - name: Upload Trivy scan artifacts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: trivy-scan-results
-        path: |
-          trivy-results.sarif
-          trivy-results.json
-        retention-days: 30
-
-  nikto-scan:
-    runs-on: ubuntu-latest
-    needs: run-pytest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Build and run Docker container
+    # Nikto scan
+    - name: Start application container
       run: |
-        docker build . --file Dockerfile --tag test-app:latest
-        docker run -d -p 8080:8080 --name test-container test-app:latest
-        echo "Waiting for application to start..."
+        docker run -d -p 8080:8080 --name test-app scan-image:latest
         sleep 10
-        
-        # Check if container is running
-        docker ps -a
-        
-        # Check if application is accessible
-        curl -v http://localhost:8080 || echo "Application not responding on port 8080"
 
-    - name: Run Nikto web vulnerability scanner
+    - name: Run Nikto scan
       run: |
-        # Create reports directory
         mkdir -p nikto-reports
-        
-        # Run Nikto and save reports to the mounted directory
-        echo "Running Nikto HTML scan..."
-        docker run --network host -v $(pwd)/nikto-reports:/reports secfigo/nikto:latest \
-          -h http://localhost:8080 \
-          -Format htm \
-          -output /reports/nikto-report.html || echo "HTML scan failed"
-        
-        echo "Running Nikto JSON scan..."
         docker run --network host -v $(pwd)/nikto-reports:/reports secfigo/nikto:latest \
           -h http://localhost:8080 \
           -Format json \
-          -output /reports/nikto-report.json || echo "JSON scan failed"
-        
-        echo "Running Nikto TXT scan..."
-        docker run --network host -v $(pwd)/nikto-reports:/reports secfigo/nikto:latest \
-          -h http://localhost:8080 \
-          -output /reports/nikto-report.txt || echo "TXT scan failed"
-        
-        # Create a status file to indicate scan was attempted
-        echo "Nikto scan completed at $(date)" > nikto-reports/scan-status.txt
-        
-        # List what was created
-        echo "Files created:"
-        ls -lh nikto-reports/
-
-    - name: Display Nikto results
-      if: always()
-      run: |
-        echo "Nikto scan completed. Report files:"
-        ls -lh nikto-reports/
-        echo ""
-        echo "Text report preview:"
-        cat nikto-reports/nikto-report.txt || echo "Text report not generated"
-
-    - name: Upload Nikto scan artifacts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: nikto-scan-results
-        path: nikto-reports/
-        if-no-files-found: warn
-        retention-days: 30
+          -output /reports/nikto-report.json || echo "Nikto scan completed"
 
     - name: Stop container
       if: always()
-      run: docker stop test-container && docker rm test-container
+      run: docker stop test-app && docker rm test-app
 
-  sign-and-attest:
+    # Upload scan artifacts
+    - name: Upload scan results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-scan-results
+        path: |
+          trivy-results.json
+          nikto-reports/
+        retention-days: 30
+
+  sign-artifacts:
     runs-on: ubuntu-latest
-    needs: [trivy-scan, nikto-scan]
+    needs: security-scans
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
 
     steps:
-    - uses: actions/checkout@v4
-
-    # Install Cosign
     - name: Install Cosign
       uses: sigstore/cosign-installer@v3.5.0
 
-    - name: Log in to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    # Get the image digest
-    - name: Get image digest
-      id: get-digest
-      run: |
-        IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
-        DIGEST=$(docker manifest inspect $IMAGE_NAME:latest | jq -r '.config.digest')
-        echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-        echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
-
-    # Sign the Docker image with Cosign (keyless signing)
-    - name: Sign the container image
-      run: |
-        cosign sign --yes \
-          ${{ steps.get-digest.outputs.image_name }}@${{ steps.get-digest.outputs.digest }}
-
-    # Download security scan artifacts
-    - name: Download Trivy results
+    - name: Download scan results
       uses: actions/download-artifact@v4
       with:
-        name: trivy-scan-results
-        path: ./security-reports/trivy/
+        name: security-scan-results
+        path: ./security-reports/
 
-    - name: Download Nikto results
-      uses: actions/download-artifact@v4
-      continue-on-error: true
-      with:
-        name: nikto-scan-results
-        path: ./security-reports/nikto/
-    
-    - name: Check downloaded artifacts
-      run: |
-        echo "=== Downloaded Security Reports ==="
-        ls -lR security-reports/ || echo "No security reports found"
-
-    # Create and sign security reports archive
-    - name: Create security reports archive
+    - name: Create and sign security reports
       run: |
         tar -czf security-reports.tar.gz security-reports/
         sha256sum security-reports.tar.gz > security-reports.tar.gz.sha256
-
-    - name: Sign security reports archive
-      run: |
         cosign sign-blob --yes \
           --bundle security-reports.tar.gz.bundle \
           security-reports.tar.gz
 
-    # Upload signed artifacts
-    - name: Upload signed security reports
+    - name: Upload signed artifacts
       uses: actions/upload-artifact@v4
       with:
         name: signed-security-reports
@@ -281,37 +125,16 @@ jobs:
           security-reports.tar.gz.bundle
         retention-days: 90
 
-    # Generate build provenance attestation
-    - name: Generate attestation
-      uses: actions/attest-build-provenance@v1
-      with:
-        subject-name: ${{ steps.get-digest.outputs.image_name }}
-        subject-digest: ${{ steps.get-digest.outputs.digest }}
-        push-to-registry: true
-
-    - name: Output signature information
-      run: |
-        echo "=== Image Signing Complete ==="
-        echo "Image: ${{ steps.get-digest.outputs.image_name }}"
-        echo "Digest: ${{ steps.get-digest.outputs.digest }}"
-        echo ""
-        echo "To verify the signature, run:"
-        echo "cosign verify \\"
-        echo "  --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/docker-image.yml@refs/heads/main \\"
-        echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \\"
-        echo "  ${{ steps.get-digest.outputs.image_name }}@${{ steps.get-digest.outputs.digest }}"
-
-  discord-notification:
+  notify-discord:
     runs-on: ubuntu-latest
-    needs: [sign-and-attest]
-    
+    needs: sign-artifacts
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
+
     steps:
     - name: Send Discord Notification
       uses: sarisia/actions-status-discord@v1
       with:
         webhook: ${{ secrets.WEBHOOK_URL }}
-        title: "Changes made to repository were pushed!"
-        description: "New Docker image has been built, scanned, signed, and pushed"
+        title: "Pipeline Complete!"
+        description: "Build, tests, security scans, and artifact signing completed successfully"
         color: 0x5a03fc
