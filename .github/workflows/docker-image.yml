@@ -144,34 +144,39 @@ jobs:
 
     - name: Run Nikto web vulnerability scanner
       run: |
-        docker run --network host -v $(pwd):/tmp secfigo/nikto:latest \
+        # Create reports directory
+        mkdir -p nikto-reports
+        
+        # Run Nikto and save reports to the mounted directory
+        docker run --network host -v $(pwd)/nikto-reports:/reports secfigo/nikto:latest \
           -h http://localhost:8080 \
           -Format htm \
-          -output /tmp/nikto-report.html || true
+          -output /reports/nikto-report.html || true
         
-        docker run --network host -v $(pwd):/tmp secfigo/nikto:latest \
+        docker run --network host -v $(pwd)/nikto-reports:/reports secfigo/nikto:latest \
           -h http://localhost:8080 \
           -Format json \
-          -output /tmp/nikto-report.json || true
+          -output /reports/nikto-report.json || true
         
-        docker run --network host -v $(pwd):/tmp secfigo/nikto:latest \
+        docker run --network host -v $(pwd)/nikto-reports:/reports secfigo/nikto:latest \
           -h http://localhost:8080 \
-          -output /tmp/nikto-report.txt || true
+          -output /reports/nikto-report.txt || true
 
     - name: Display Nikto results
       if: always()
       run: |
-        echo "Nikto scan completed. Check the logs above for results."
+        echo "Nikto scan completed. Report files:"
+        ls -lh nikto-reports/
+        echo ""
+        echo "Text report preview:"
+        cat nikto-reports/nikto-report.txt || echo "Text report not generated"
 
     - name: Upload Nikto scan artifacts
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: nikto-scan-results
-        path: |
-          nikto-report.html
-          nikto-report.json
-          nikto-report.txt
+        path: nikto-reports/
         retention-days: 30
 
     - name: Stop container
