@@ -84,17 +84,24 @@ jobs:
       run: |
         mkdir -p zap-reports
         
-        # Run ZAP baseline scan
+        # Run ZAP baseline scan with proper output paths
         docker run --network host -v $(pwd)/zap-reports:/zap/wrk/:rw \
           ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
           -t http://localhost:8080 \
-          -J zap-report.json \
-          -r zap-report.html \
-          || true
+          -J /zap/wrk/zap-report.json \
+          -w /zap/wrk/zap-report.md \
+          -r /zap/wrk/zap-report.html \
+          || echo "ZAP scan completed with findings"
         
-        # Check if reports were created
+        # Verify files were created
         echo "ZAP scan results:"
         ls -lh zap-reports/
+        
+        # Show summary if available
+        if [ -f zap-reports/zap-report.md ]; then
+          echo "ZAP Summary:"
+          head -50 zap-reports/zap-report.md
+        fi
 
     - name: Stop container
       if: always()
