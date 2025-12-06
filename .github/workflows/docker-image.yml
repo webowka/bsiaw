@@ -38,6 +38,21 @@ jobs:
       security-events: write
       id-token: write
       contents: read
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: authdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
 
     steps:
     - uses: actions/checkout@v4
@@ -69,7 +84,13 @@ jobs:
     # ZAP scan
     - name: Start application container
       run: |
-        docker run -d --network host --name test-app scan-image:latest
+        docker run -d --network host --name test-app \
+          -e DATABASE_URL="postgresql://user:password@localhost:5432/authdb" \
+          -e SECRET_KEY="test-secret-key-for-ci-pipeline-min-32-characters-long" \
+          -e ADMIN_USERNAME="admin" \
+          -e ADMIN_PASSWORD="admin123" \
+          -e ADMIN_EMAIL="admin@forum.local" \
+          scan-image:latest
         echo "Waiting for application to start..."
         sleep 15
         
