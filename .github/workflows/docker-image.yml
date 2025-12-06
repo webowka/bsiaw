@@ -74,11 +74,28 @@ jobs:
         sleep 15
         
         # Check container status
+        echo "=== Container Status ==="
         docker ps -a
         
-        # Test connectivity
-        echo "Testing application endpoint..."
-        curl -v http://localhost:8080 || echo "Application not responding"
+        # Check container logs
+        echo "=== Container Logs ==="
+        docker logs test-app
+        
+        # Test connectivity with retries
+        echo "=== Testing application endpoint ==="
+        for i in {1..10}; do
+          if curl -f http://localhost:8000; then
+            echo "Application is responding!"
+            break
+          else
+            echo "Attempt $i: Application not responding yet, waiting 3 seconds..."
+            sleep 3
+          fi
+        done
+        
+        # Final verification
+        echo "=== Final verification ==="
+        curl -v http://localhost:8000 || (echo "ERROR: Application failed to start" && docker logs test-app && exit 1)
 
     - name: Run OWASP ZAP scan
       run: |
@@ -87,13 +104,13 @@ jobs:
         
         # Verify app is accessible
         echo "Testing application before ZAP scan..."
-        curl -I http://localhost:8080 || echo "Warning: App might not be responding"
+        curl -I http://localhost:8000 || echo "Warning: App might not be responding"
         
         # Run ZAP baseline scan directly to zap-reports directory
         echo "Starting ZAP scan..."
         docker run --network host -v $(pwd)/zap-reports:/zap/wrk/:rw \
           ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-          -t http://localhost:8080 \
+          -t http://localhost:8000 \
           -J zap-report.json \
           -w zap-report.md \
           -r zap-report.html \
