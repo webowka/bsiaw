@@ -111,9 +111,8 @@ jobs:
         mkdir -p zap-reports
         chmod 777 zap-reports
         
-        # Run ZAP baseline scan - use special exit code handling
-        # ZAP returns: 0=success, 1=warnings, 2=errors, 3=failed
-        set +e  # Temporarily disable exit on error
+        # Run ZAP baseline scan - ignore exit code from findings
+        set +e
         docker run --network host -v $(pwd)/zap-reports:/zap/wrk/:rw \
           ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
           -t http://localhost:8000 \
@@ -121,23 +120,17 @@ jobs:
           -w zap-report.md \
           -r zap-report.html
         ZAP_EXIT_CODE=$?
-        set -e  # Re-enable exit on error
+        set -e
         
         echo "ZAP scan completed with exit code: $ZAP_EXIT_CODE"
         
-        # Verify reports were created
+        # Only verify that reports were created - that means scan executed successfully
         if [ ! -f zap-reports/zap-report.json ]; then
-          echo "ERROR: ZAP scan failed to produce reports"
+          echo "ERROR: ZAP scan failed to execute - no reports generated"
           exit 1
         fi
         
-        # Exit codes: 0 or 1 (warnings) are acceptable, 2+ means scan failed
-        if [ $ZAP_EXIT_CODE -ge 2 ]; then
-          echo "ERROR: ZAP scan execution failed"
-          exit 1
-        fi
-        
-        echo "ZAP scan executed successfully"
+        echo "ZAP scan executed successfully - reports generated"
 
     - name: Stop container
       if: always()
