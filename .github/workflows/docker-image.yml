@@ -8,7 +8,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Docker image
+      run: docker build . --file Dockerfile --tag forum-app:latest
+
+    - name: Save Docker image
+      run: docker save forum-app:latest | gzip > forum-app.tar.gz
+
+    - name: Upload Docker image artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image
+        path: forum-app.tar.gz
+        retention-days: 1
+
+  unit-tests:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,12 +46,80 @@ jobs:
     - name: Run Unit Tests
       run: pytest -v unit_tests.py
 
-    - name: Build Docker image
-      run: docker build . --file Dockerfile --tag test-app:latest
-
-  scan-and-sign:
+  integration-tests:
     runs-on: ubuntu-latest
-    needs: build-and-test
+    needs: build
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5434:5432
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download Docker image
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+
+    - name: Load Docker image
+      run: docker load < forum-app.tar.gz
+
+    - name: Start application container
+      run: |
+        docker run -d --network host --name test-app \
+          -e DATABASE_URL="postgresql://testuser:testpass@localhost:5434/testdb" \
+          -e SECRET_KEY="test-secret-key-for-integration-tests-min-32-characters" \
+          -e ADMIN_USERNAME="admin" \
+          -e ADMIN_PASSWORD="admin123" \
+          -e ADMIN_EMAIL="admin@forum.local" \
+          -p 8001:8000 \
+          forum-app:latest
+
+        echo "Waiting for application to start..."
+        sleep 15
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install test dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+
+    - name: Run Integration Tests
+      env:
+        TEST_DATABASE_URL: postgresql://testuser:testpass@localhost:5434/testdb
+        TEST_BASE_URL: http://localhost:8001
+      run: |
+        pytest tests/ -v --tb=short
+
+    - name: Show application logs on failure
+      if: failure()
+      run: docker logs test-app
+
+    - name: Stop container
+      if: always()
+      run: |
+        docker stop test-app 2>/dev/null || true
+        docker rm test-app 2>/dev/null || true
+
+  security-scans:
+    runs-on: ubuntu-latest
+    needs: [build, unit-tests, integration-tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       security-events: write
@@ -57,8 +144,15 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build Docker image
-      run: docker build . --file Dockerfile --tag scan-image:latest
+    - name: Download Docker image
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+
+    - name: Load Docker image
+      run: |
+        docker load < forum-app.tar.gz
+        docker tag forum-app:latest scan-image:latest
 
     # Trivy scan - FAIL if scan execution fails
     - name: Run Trivy vulnerability scanner
@@ -172,7 +266,7 @@ jobs:
 
   notify-discord:
     runs-on: ubuntu-latest
-    needs: scan-and-sign
+    needs: security-scans
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
@@ -181,5 +275,5 @@ jobs:
       with:
         webhook: ${{ secrets.WEBHOOK_URL }}
         title: "Pipeline Complete!"
-        description: "Build, tests, security scans, and artifact signing completed successfully"
+        description: "Build, unit tests, integration tests, security scans, and artifact signing completed successfully"
         color: 0x5a03fc

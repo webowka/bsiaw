@@ -57,7 +57,7 @@ async def client():
 
 
 @pytest.fixture(scope="function")
-async def authenticated_client(client, clean_database)
+async def authenticated_client(client, clean_database):
     register_data = {
         "username": "testuser",
         "password": "TestPass123!"
