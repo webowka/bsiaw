@@ -6,7 +6,8 @@ from httpx import AsyncClient
 async def test_login_success(client: AsyncClient, clean_database):
     user_data = {
         "username": "loginuser",
-        "password": "LoginPass123!"
+        "password": "LoginPass123!",
+        "email": "loginuser@example.com"
     }
     await client.post("/register", data=user_data)
 
@@ -21,7 +22,8 @@ async def test_login_success(client: AsyncClient, clean_database):
 async def test_login_wrong_password(client: AsyncClient, clean_database):
     user_data = {
         "username": "testuser",
-        "password": "CorrectPass123!"
+        "password": "CorrectPass123!",
+        "email": "testuser@example.com"
     }
     await client.post("/register", data=user_data)
 
@@ -65,7 +67,8 @@ async def test_login_page_loads(client: AsyncClient):
 async def test_login_case_sensitivity(client: AsyncClient, clean_database):
     user_data = {
         "username": "TestUser",
-        "password": "Pass123!"
+        "password": "Pass123!",
+        "email": "testuser@example.com"
     }
     await client.post("/register", data=user_data)
 
@@ -84,7 +87,8 @@ async def test_login_session_persistence(
 ):
     user_data = {
         "username": "sessionuser",
-        "password": "SessionPass123!"
+        "password": "SessionPass123!",
+        "email": "sessionuser@example.com"
     }
     await client.post("/register", data=user_data)
     login_response = await client.post("/login", data=user_data)
@@ -99,7 +103,8 @@ async def test_login_redirect_after_registration(
 ):
     user_data = {
         "username": "redirectuser",
-        "password": "RedirectPass123!"
+        "password": "RedirectPass123!",
+        "email": "redirectuser@example.com"
     }
 
     register_response = await client.post("/register", data=user_data)

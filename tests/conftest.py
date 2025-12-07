@@ -61,7 +61,8 @@ async def client():
 async def authenticated_client(client, clean_database):
     register_data = {
         "username": "testuser",
-        "password": "TestPass123!"
+        "password": "TestPass123!",
+        "email": "testuser@example.com"
     }
     await client.post("/register", data=register_data)
 
@@ -74,7 +75,8 @@ async def authenticated_client(client, clean_database):
 def sample_user_data():
     return {
         "username": "john_doe",
-        "password": "SecurePass123!"
+        "password": "SecurePass123!",
+        "email": "john@example.com"
     }
 
 
@@ -84,10 +86,11 @@ def multiple_users_data():
     fake = Faker()
 
     users = []
-    for _ in range(5):
+    for i in range(5):
         users.append({
             "username": fake.user_name(),
-            "password": fake.password(length=12, special_chars=True)
+            "password": fake.password(length=12, special_chars=True),
+            "email": f"user{i}@example.com"
         })
     return users
 

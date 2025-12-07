@@ -12,7 +12,8 @@ async def test_full_user_journey(client: AsyncClient, clean_database):
 
     user_data = {
         "username": "journey_user",
-        "password": "JourneyPass123!"
+        "password": "JourneyPass123!",
+        "email": "journey@example.com"
     }
     register_response = await client.post("/register", data=user_data)
     assert register_response.status_code == 302
@@ -55,10 +56,11 @@ async def test_sql_injection_protection(client: AsyncClient, clean_database):
         "1' UNION SELECT * FROM users--"
     ]
 
-    for malicious_input in malicious_inputs:
+    for idx, malicious_input in enumerate(malicious_inputs):
         register_response = await client.post("/register", data={
             "username": malicious_input,
-            "password": "Pass123!"
+            "password": "Pass123!",
+            "email": f"sql{idx}@example.com"
         })
 
         assert register_response.status_code in [302, 400, 422]
@@ -80,10 +82,11 @@ async def test_xss_protection(client: AsyncClient, clean_database):
         "<svg onload=alert('XSS')>"
     ]
 
-    for payload in xss_payloads:
+    for idx, payload in enumerate(xss_payloads):
         response = await client.post("/register", data={
             "username": payload,
-            "password": "Pass123!"
+            "password": "Pass123!",
+            "email": f"xss{idx}@example.com"
         })
 
         assert response.status_code in [302, 400, 422]
@@ -103,14 +106,16 @@ async def test_xss_protection(client: AsyncClient, clean_database):
 async def test_rate_limiting_simulation(client: AsyncClient, clean_database):
     user_data = {
         "username": "ratelimit_test",
-        "password": "RatePass123!"
+        "password": "RatePass123!",
+        "email": "ratelimit@example.com"
     }
 
     responses = []
     for i in range(20):
         response = await client.post("/register", data={
             "username": f"user_{i}",
-            "password": "Pass123!"
+            "password": "Pass123!",
+            "email": f"user{i}@example.com"
         })
         responses.append(response)
 
@@ -122,7 +127,8 @@ async def test_rate_limiting_simulation(client: AsyncClient, clean_database):
 async def test_session_management(client: AsyncClient, clean_database):
     user_data = {
         "username": "sessiontest",
-        "password": "SessionPass123!"
+        "password": "SessionPass123!",
+        "email": "sessiontest@example.com"
     }
 
     await client.post("/register", data=user_data)
@@ -149,7 +155,8 @@ async def test_database_persistence(client: AsyncClient, clean_database, db_engi
 
     user_data = {
         "username": "persist_user",
-        "password": "PersistPass123!"
+        "password": "PersistPass123!",
+        "email": "persist@example.com"
     }
 
     await client.post("/register", data=user_data)
