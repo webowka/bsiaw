@@ -82,14 +82,17 @@ def sample_user_data():
 
 @pytest.fixture
 def multiple_users_data():
-    from faker import Faker
-    fake = Faker()
-
+    """
+    Generate test users with valid data that meets validation requirements:
+    - Username: 3-20 chars, alphanumeric + underscore, doesn't start with digit
+    - Password: min 8 chars, uppercase, lowercase, digit, special char
+    - Email: valid format
+    """
     users = []
     for i in range(5):
         users.append({
-            "username": fake.user_name(),
-            "password": fake.password(length=12, special_chars=True),
+            "username": f"testuser_{i}",  # Valid: starts with letter, only alphanumeric + underscore
+            "password": f"TestPass{i}!",  # Valid: has uppercase, lowercase, digit, special char
             "email": f"user{i}@example.com"
         })
     return users
