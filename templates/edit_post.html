@@ -23,6 +23,7 @@
       <h1>Edit Post</h1>
 
       <form id="postForm" method="post" action="/post/{{ post.id }}/edit">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="text" name="title" placeholder="Title" value="{{ post.title }}" required />
         <input type="text" name="tags" placeholder="Tags (comma-separated)" value="{{ ','.join([tag.name for tag in post.tags]) }}" />
 

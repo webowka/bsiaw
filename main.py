@@ -10,6 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel, validator, Field
 from datetime import datetime
 from security.asgi_middleware import AddSecurityHeadersMiddleware
+from security.csrf import CSRFMiddleware, generate_csrf_token
 import os
 import time
 import re
@@ -393,6 +394,7 @@ app = FastAPI()
 # Add session middleware
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-min-32-chars")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+app.add_middleware(CSRFMiddleware, secret_key=SECRET_KEY)
 app.add_middleware(AddSecurityHeadersMiddleware)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -415,6 +417,9 @@ def from_json_filter(value):
         return []
 
 templates.env.filters['from_json'] = from_json_filter
+
+# Add CSRF token to all template contexts
+templates.env.globals['csrf_token'] = lambda request: generate_csrf_token(request)
 
 # Create admin user on startup
 @app.on_event("startup")

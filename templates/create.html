@@ -133,6 +133,7 @@
       </div>
 
       <form method="post" action="/create" id="postForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <div class="form-group">
           <label for="title">* POST TITLE:</label>
           <input type="text" id="title" name="title" placeholder="Enter a descriptive title..." required maxlength="200" />
