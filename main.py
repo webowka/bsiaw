@@ -7,6 +7,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from passlib.context import CryptContext
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from pydantic import BaseModel, validator, Field
 from datetime import datetime
 from security.asgi_middleware import AddSecurityHeadersMiddleware
@@ -390,7 +392,8 @@ def initialize_database():
 initialize_database()
 
 app = FastAPI()
-
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+app.add_middleware(HTTPSRedirectMiddleware)
 # Add session middleware
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-min-32-chars")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
