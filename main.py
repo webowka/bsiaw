@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from security.asgi_middleware import AddSecurityHeadersMiddleware
 from security.csrf import CSRFMiddleware, generate_csrf_token
 from security.session_management import SessionTimeoutMiddleware, init_session
+from security.xss_protection import sanitize_text, sanitize_html_content, sanitize_username, sanitize_filename
 import os
 import time
 import re
@@ -971,8 +972,9 @@ async def create(
 ):
     import json as json_lib
 
+    clean_title = sanitize_text(title)  # Usuwa WSZYSTKIE HTML
     new_post = Post(
-        title=title,
+        title=clean_title,
         content="",
         user_id=current_user.id
     )
@@ -997,7 +999,9 @@ async def create(
         for idx, block in enumerate(blocks_data):
             block_type = block.get('type')
             if block_type == 'text':
+                clean_block_content = sanitize_html_content(block.get('content', ''))  # Bezpieczne HTML
                 content_block = ContentBlock(
+                    content=clean_block_content,
                     post_id=new_post.id,
                     block_type='text',
                     content=block.get('content'),
@@ -1116,8 +1120,9 @@ async def add_comment(
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    clean_content = sanitize_html_content(content)  # Bezpieczne HTML
     new_comment = Comment(
-        content=content.strip(),
+        content=content=clean_content,
         post_id=post_id,
         user_id=current_user.id
     )
@@ -1236,7 +1241,8 @@ async def create_thread(
     if len(title) > 200:
         return RedirectResponse(url="/threads?error=Title too long", status_code=303)
 
-    new_thread = Thread(title=title.strip(), user_id=current_user.id)
+    clean_title = sanitize_text(title)  # Usuwa WSZYSTKIE HTML
+    new_thread = Thread(title=clean_title, user_id=current_user.id)
     db.add(new_thread)
     db.flush()
 
@@ -1319,8 +1325,9 @@ async def add_thread_message(
     thread = db.query(Thread).filter(Thread.id == thread_id).first()
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
+    clean_content = sanitize_html_content(content)
     new_message = ThreadMessage(
-        content=content.strip(),
+        content=clean_content,
         thread_id=thread_id,
         user_id=current_user.id
     )
