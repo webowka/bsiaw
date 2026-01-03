@@ -2,7 +2,7 @@ from fastapi import FastAPI, Form, HTTPException, Depends, Request, UploadFile, 
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Text, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from passlib.context import CryptContext
@@ -23,61 +23,127 @@ from pathlib import Path
 from collections import defaultdict
 from threading import Lock
 
-# Rate limiting implementation
-class RateLimiter:
-    """Simple in-memory rate limiter"""
-    def __init__(self):
-        self.requests = defaultdict(list)
-        self.lock = Lock()
+# ===== RATE LIMITING Z POSTGRESQL =====
+class DatabaseRateLimiter:
+    """Rate limiter using PostgreSQL database"""
     
-    def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
+    def _get_client_ip(self, request) -> str:
+        """Get real client IP from Azure proxy headers"""
+        # Azure Application Gateway / Front Door headers
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+        
+        # Azure Load Balancer header
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
+        
+        # Azure specific headers
+        azure_client_ip = request.headers.get("X-Azure-ClientIP")
+        if azure_client_ip:
+            return azure_client_ip.strip()
+        
+        # Fallback
+        return request.client.host if request.client else "unknown"
+    
+    def is_allowed(self, request, db: Session, max_requests: int, window_seconds: int) -> bool:
         """Check if request is allowed under rate limit"""
-        now = time.time()
-        with self.lock:
-            # Remove old requests outside the window
-            self.requests[key] = [req_time for req_time in self.requests[key] 
-                                 if now - req_time < window_seconds]
+        client_ip = self._get_client_ip(request)
+        endpoint = request.url.path
+        key = f"{endpoint}:{client_ip}"
+        
+        now = datetime.utcnow()
+        window_start = now - timedelta(seconds=window_seconds)
+        
+        try:
+            # Clean old entries (older than window)
+            db.query(RateLimitEntry).filter(
+                RateLimitEntry.key == key,
+                RateLimitEntry.request_time < window_start
+            ).delete(synchronize_session=False)
             
-            # Check if under limit
-            if len(self.requests[key]) < max_requests:
-                self.requests[key].append(now)
+            # Count requests in current window
+            count = db.query(RateLimitEntry).filter(
+                RateLimitEntry.key == key,
+                RateLimitEntry.request_time >= window_start
+            ).count()
+            
+            # Debug logging
+            print(f"\n=== Rate Limit Check ===")
+            print(f"Endpoint: {endpoint}")
+            print(f"Client IP: {client_ip}")
+            print(f"Key: {key}")
+            print(f"Current requests: {count}/{max_requests}")
+            print(f"Window: {window_seconds}s")
+            
+            if count < max_requests:
+                # Add new entry
+                new_entry = RateLimitEntry(
+                    key=key,
+                    request_time=now
+                )
+                db.add(new_entry)
+                db.commit()
+                print(f"✓ Request allowed ({count + 1}/{max_requests})")
                 return True
-            return False
+            else:
+                print(f"✗ Rate limit exceeded!")
+                return False
+                
+        except Exception as e:
+            print(f"Rate limit error: {e}")
+            db.rollback()
+            # Fail-open: allow request if there's an error
+            return True
 
-rate_limiter = RateLimiter()
 
-def check_rate_limit(request: Request, max_requests: int = 100, window_seconds: int = 60):
-    """Dependency to check rate limits"""
-    # Skip rate limiting in test environment
-    # Check if running in test mode by examining DATABASE_URL or TESTING flag
+rate_limiter = DatabaseRateLimiter()
+
+
+def check_rate_limit(request, max_requests: int = 100, window_seconds: int = 60):
+    """Dependency to check rate limits using database"""
+    # Skip in test environment
     db_url = os.getenv("DATABASE_URL", "")
     if (os.getenv("TESTING") == "true" or
         "testdb" in db_url or
         "testuser" in db_url or
-        ":5434/" in db_url):  # Test database port
+        ":5434/" in db_url):
         return
+    
+    # Get database session
+    db = SessionLocal()
+    try:
+        if not rate_limiter.is_allowed(request, db, max_requests, window_seconds):
+            client_ip = rate_limiter._get_client_ip(request)
+            security_logger.warning(
+                f"Rate limit exceeded: {client_ip} on {request.url.path}"
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many requests. Please wait {window_seconds} seconds before trying again."
+            )
+    finally:
+        db.close()
 
-    client_ip = request.client.host if request.client else "unknown"
-    if not rate_limiter.is_allowed(client_ip, max_requests, window_seconds):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Please try again later."
-        )
 
-def rate_limit_register(request: Request):
-    """Rate limit dependency for register endpoint"""
+def rate_limit_register(request):
+    """Rate limit: 5 registrations per 5 minutes"""
     return check_rate_limit(request, max_requests=5, window_seconds=300)
 
-def rate_limit_login(request: Request):
-    """Rate limit dependency for login endpoint"""
+
+def rate_limit_login(request):
+    """Rate limit: 3 login attempts per 5 minutes"""  
     return check_rate_limit(request, max_requests=3, window_seconds=300)
 
-def rate_limit_create_post(request: Request):
-    """Rate limit dependency for create post endpoint"""
+
+def rate_limit_create_post(request):
+    """Rate limit: 3 posts per 3 minutes"""
     return check_rate_limit(request, max_requests=3, window_seconds=180)
 
-def rate_limit_comment(request: Request):
-    """Rate limit dependency for comment endpoint"""
+
+def rate_limit_comment(request):
+    """Rate limit: 30 comments per minute"""
     return check_rate_limit(request, max_requests=30, window_seconds=60)
 
 # Configure logging for security events - console only
@@ -259,6 +325,15 @@ class CommentReaction(Base):
 
     comment = relationship("Comment", back_populates="reactions")
     user = relationship("User")
+
+# ===== NOWY MODEL DLA RATE LIMITINGU =====
+class RateLimitEntry(Base):
+    """Model przechowujący informacje o rate limitingu"""
+    __tablename__ = "rate_limits"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(200), nullable=False, index=True)  # endpoint:ip np. "/create:192.168.1.1"
+    request_time = Column(DateTime, nullable=False, index=True)  # kiedy wysłano request
 
 class Tag(Base):
     __tablename__ = "tags"
