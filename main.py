@@ -1112,7 +1112,6 @@ async def create(
                     content=clean_block_content,
                     post_id=new_post.id,
                     block_type='text',
-                    content=block.get('content'),
                     order_index=idx
                 )
                 db.add(content_block)
@@ -1230,7 +1229,7 @@ async def add_comment(
         raise HTTPException(status_code=404, detail="Post not found")
     clean_content = sanitize_html_content(content)  # Bezpieczne HTML
     new_comment = Comment(
-        content=content=clean_content,
+        content=clean_content,
         post_id=post_id,
         user_id=current_user.id
     )
