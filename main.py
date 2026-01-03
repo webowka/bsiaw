@@ -80,12 +80,11 @@ def rate_limit_comment(request: Request):
     """Rate limit dependency for comment endpoint"""
     return check_rate_limit(request, max_requests=30, window_seconds=60)
 
-# Configure logging for security events
+# Configure logging for security events - console only
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('security.log'),
         logging.StreamHandler()
     ]
 )
@@ -814,15 +813,6 @@ async def login(
         validated_data = LoginRequest(username=username, password=password)
     except Exception as e:
         # Log failed attempt - invalid format
-        login_attempt = LoginAttempt(
-            username=username[:50],  # Limit length for safety
-            success=0,
-            ip_address=client_ip,
-            user_agent=user_agent[:200],
-            failure_reason="invalid_format"
-        )
-        db.add(login_attempt)
-        db.commit()
         security_logger.warning(f"Failed login attempt - invalid format: {username} from {client_ip}")
 
         return templates.TemplateResponse(
@@ -841,15 +831,6 @@ async def login(
 
     if not user:
         # Log failed attempt - user not found
-        login_attempt = LoginAttempt(
-            username=validated_data.username,
-            success=0,
-            ip_address=client_ip,
-            user_agent=user_agent[:200],
-            failure_reason="invalid_username"
-        )
-        db.add(login_attempt)
-        db.commit()
         security_logger.warning(f"Failed login attempt - invalid username: {validated_data.username} from {client_ip}")
 
         return templates.TemplateResponse(
@@ -864,15 +845,6 @@ async def login(
     # Weryfikacja hasła
     if not pwd_context.verify(validated_data.password, user.hashed_password):
         # Log failed attempt - wrong password
-        login_attempt = LoginAttempt(
-            username=validated_data.username,
-            success=0,
-            ip_address=client_ip,
-            user_agent=user_agent[:200],
-            failure_reason="invalid_password"
-        )
-        db.add(login_attempt)
-        db.commit()
         security_logger.warning(f"Failed login attempt - wrong password: {validated_data.username} from {client_ip}")
 
         return templates.TemplateResponse(
@@ -894,15 +866,6 @@ async def login(
             security_logger.info(f"User {user.username} password expired ({password_age.days} days old)")
 
     # Log successful login
-    login_attempt = LoginAttempt(
-        username=validated_data.username,
-        success=1,
-        ip_address=client_ip,
-        user_agent=user_agent[:200],
-        failure_reason=None
-    )
-    db.add(login_attempt)
-    db.commit()
     security_logger.info(f"Successful login: {validated_data.username} from {client_ip}")
 
     # Tworzenie sesji z bezpiecznymi parametrami
