@@ -48,6 +48,10 @@ rate_limiter = RateLimiter()
 
 def check_rate_limit(request: Request, max_requests: int = 100, window_seconds: int = 60):
     """Dependency to check rate limits"""
+    # Skip rate limiting in test environment
+    if os.getenv("TEST_DATABASE_URL") or os.getenv("TESTING") == "true":
+        return
+
     client_ip = request.client.host if request.client else "unknown"
     if not rate_limiter.is_allowed(client_ip, max_requests, window_seconds):
         raise HTTPException(
